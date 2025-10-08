@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+sample_image final.jpg
+sample_image1.jpg
+sample_image3.jpg
+sample_video1.mp4
+sample_video2.mp4
+yolo11l.pt
+yolo8n.pt
