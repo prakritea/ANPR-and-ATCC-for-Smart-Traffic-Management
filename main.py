@@ -10,6 +10,7 @@ from datetime import datetime
 import tempfile
 import sys
 import io
+from traffic_signal import compute_signal_plan
 
 # ---------------- STREAMLIT CONFIG ----------------
 st.set_page_config(page_title="🚦 Smart Traffic System (ANPR + ATCC)", layout="wide")
@@ -32,7 +33,10 @@ st.sidebar.header("⚙️ Settings")
 
 line_y = st.sidebar.slider("Counting Line Y", 100, 800, 430)
 use_gpu = st.sidebar.checkbox("Use GPU for OCR", False)
-min_box_area = st.sidebar.slider("Minimum Box Area", 500, 10000, 2000, step=100)
+min_box_area = st.sidebar.slider("Minimum Box Area", 200, 10000, 1200, step=100)
+det_conf = st.sidebar.slider("Detection Confidence", 0.1, 0.9, 0.25, step=0.05)
+iou_thr = st.sidebar.slider("NMS IoU Threshold", 0.1, 0.9, 0.5, step=0.05)
+max_det = st.sidebar.number_input("Max Detections per Frame", min_value=50, max_value=500, value=200, step=10)
 
 uploaded_video = st.sidebar.file_uploader("📤 Upload a video file", type=["mp4", "avi", "mov"])
 
@@ -125,7 +129,14 @@ if uploaded_video is not None:
             if not ret:
                 break
 
-            results = model.track(frame, persist=True, classes=[2, 3, 5, 7])
+            results = model.track(
+                frame,
+                persist=True,
+                classes=[2, 3, 5, 7],  # car, motorcycle, bus, truck
+                conf=det_conf,
+                iou=iou_thr,
+                max_det=int(max_det),
+            )
 
             if not results or not results[0].boxes:
                 video_placeholder.image(frame, channels="BGR")
@@ -133,8 +144,15 @@ if uploaded_video is not None:
 
             # Extract detection boxes and IDs
             boxes = results[0].boxes.xyxy.cpu().numpy()
-            ids = results[0].boxes.id.cpu().numpy()
+            ids_tensor = results[0].boxes.id
             class_ids = results[0].boxes.cls.cpu().numpy()
+
+            # If tracker hasn't assigned IDs yet, fall back to sequential indices
+            if ids_tensor is None:
+                import numpy as np
+                ids = np.arange(len(boxes))
+            else:
+                ids = ids_tensor.cpu().numpy()
 
             # Draw counting line
             cv2.line(frame, (100, line_y), (frame.shape[1] - 100, line_y), (0, 0, 255), 2)
@@ -193,6 +211,14 @@ if uploaded_video is not None:
                     cols = st.columns(4)
                     for i, (name, count) in enumerate(vehicle_counts.items()):
                         cols[i % 4].metric(label=name.capitalize(), value=count)
+
+                    # Compute and display suggested signal plan
+                    if vehicle_counts:
+                        plan = compute_signal_plan(vehicle_counts, cycle_seconds=90, min_green=10)
+                        st.markdown("**🟢 Suggested Green Times (s) from ATCC:**")
+                        pcols = st.columns(4)
+                        for i, (k, v) in enumerate(plan.items()):
+                            pcols[i % 4].metric(label=k.capitalize(), value=v)
 
                 with speed_placeholder:
                     st.subheader("⚡ YOLO Processing Speed (ms)")
